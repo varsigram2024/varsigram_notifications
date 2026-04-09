@@ -1,10 +1,12 @@
 import { db } from '../config/firebase';
 import { sendPushNotification } from '../services/expoService';
 import * as admin from 'firebase-admin';
-import { ChatMessage, UserToken } from '../types';
+import { ChatMessage, ConversationType, UserToken } from '../types';
 
 // Track health status
 export let isListenerActive = false;
+
+const ALLOWED_CONVERSATION_TYPES: ConversationType[] = ['personal', 'group', 'room'];
 
 export const startChatListener = () => {
   const serverStartTime = admin.firestore.Timestamp.now();
@@ -21,16 +23,34 @@ export const startChatListener = () => {
           if (change.type === 'added') {
             try {
               const messageData = change.doc.data() as ChatMessage;
-              const { receiverSlug, senderName = "Someone", text } = messageData;
+              const {
+                receiverSlug,
+                senderId,
+                senderName = 'Someone',
+                text,
+                conversation_id,
+                conversation_type,
+                isSystem,
+                type,
+              } = messageData;
 
               if (!receiverSlug || !text) continue;
+              if (isSystem || type === 'system') continue;
+              if (senderId && senderId === receiverSlug) continue;
+              if (!conversation_id || !conversation_type) continue;
+              if (!ALLOWED_CONVERSATION_TYPES.includes(conversation_type)) continue;
 
               const userDoc = await db.collection('userTokens').doc(receiverSlug).get();
               
               if (userDoc.exists) {
                 const data = userDoc.data() as UserToken;
                 if (data?.expoPushToken) {
-                  await sendPushNotification(data.expoPushToken, senderName, text);
+                  await sendPushNotification(data.expoPushToken, senderName, text, {
+                    type: 'message',
+                    conversation_id,
+                    conversation_type,
+                    sender_id: senderId,
+                  });
                 }
               }
             } catch (error) {
